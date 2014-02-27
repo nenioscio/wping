@@ -30,7 +30,7 @@ find_package(C99 REQUIRED)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${C99_C_FLAGS}")
  
 find_package (Threads)
-add_executable(wping wping.c mongoose.c)
+add_executable(wping wping.c mongoose/mongoose.c)
 target_link_libraries (wping ${CMAKE_THREAD_LIBS_INIT})
 target_os_libraries(wping)
 
@@ -39,4 +39,5 @@ target_os_libraries(wping)
 # add the binary tree to the search path for include files
 # so that we will find TutorialConfig.h
 include_directories("${PROJECT_BINARY_DIR}")
+include_directories("${PROJECT_SOURCE_DIR}/mongoose")
 

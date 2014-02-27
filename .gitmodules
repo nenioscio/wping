@@ -1,0 +1,6 @@
+[submodule "mongoose"]
+	path = mongoose
+	url = git@github.com:cesanta/mongoose
+[submodule "jansson"]
+	path = jansson
+	url = git@github.com:/akheron/jansson

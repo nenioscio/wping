@@ -14,6 +14,8 @@ Client specifies target using dst parameter for IPv4 destination specification a
 
 *   Daemonize
 
+*   Add json output
+
 -----
 
 Bundled Software:
@@ -23,5 +25,6 @@ Bundled Software:
     Copyright (c) 2004-2013 Sergey Lyubka &lt;valenok at gmail dot com&gt;<br>Copyright (c) 2013-2014 Cesanta Software Limited
 
 *   solarisfixes.h
+
     Copyright (c) 2009-2012, Salvatore Sanfilippo &lt;antirez at gmail dot com&gt;
 

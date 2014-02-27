@@ -1,10 +1,10 @@
 #ifdef HAVE_CONFIG_H
-#include <config.h>
-#else
 #include <WPingConfig.h>
 #endif
 
+#ifdef _LINUX
 #define _GNU_SOURCE 1
+#endif
 
 #include <stdio.h>
 #include <unistd.h>
@@ -88,7 +88,7 @@ typedef struct ping_stack
 
 static const char *html_form =
   "<html><body>PING example."
-  "<form method=\"POST\" action=\"/handle_post_request\">"
+  "<form method=\"POST\" action=\"/ping\">"
   "Target Hostname/IPv4: <input type=\"text\" name=\"dst\" /> <br/>"
   "Timeout: <input type=\"text\" name=\"timeout\" /> <br/>"
   "<input type=\"submit\" />"
@@ -337,12 +337,14 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int timeout) {
                 retval = -5;
                 break;
             }
-            printf("package received\nreadsize=%d\npackagesize=%d\nsizeof(pkt)=%d\n",
+#ifdef _DEBUG
+            printf("package received\nreadsize=%ld\npackagesize=%ld\nsizeof(pkt)=%zu\n",
                 readsize, packagesize, sizeof(pkt));
+#endif
             if (icmp_pkt_matches(&pkt, &buf, sizeof(pkt), packagesize)) {
                 icmp = (icmphdr_t *)(buf+ip->ip_hl*4);
 #ifdef _DEBUG
-                printf("package matched\nreadsize=%d\npackagesize=%d\nsizeof(pkt)=%d\n",
+                printf("package matched\nreadsize=%ld\npackagesize=%ld\nsizeof(pkt)=%zu\n",
                     readsize, packagesize, sizeof(pkt));
                 display_ping_pkt(buf, readsize);
                 printf("icmp_type: %d\n", icmp->icmp_type);
@@ -374,7 +376,7 @@ static int handler(struct mg_connection *conn) {
   struct hostent *dst_host;
   struct sockaddr_in addr;
 
-  if (strcmp(conn->uri, "/handle_post_request") == 0) {
+  if (strcmp(conn->uri, "/ping") == 0) {
     // User has submitted a form, show submitted data and a variable value
     // Parse form data. var1 and var2 are guaranteed to be NUL-terminated
     mg_get_var(conn, "dst", dst, sizeof(dst));
@@ -384,6 +386,7 @@ static int handler(struct mg_connection *conn) {
     // Send reply to the client, showing submitted form values.
     // POST data is in conn->content, data length is in conn->content_len
     mg_send_header(conn, "Content-Type", "text/plain");
+#ifdef _DEBUG
     if ((accept=mg_get_header(conn, "Accept")) != NULL) {
         mg_printf_data(conn,
                         "Accept: %s\n", accept);
@@ -395,6 +398,7 @@ static int handler(struct mg_connection *conn) {
                    "Timeout(ms):     [%s]\n",
                    conn->content_len, conn->content,
                    conn->content_len, dst, timeoutstr);
+#endif
 
     dst_host = gethostbyname(dst);
     if (dst_host == NULL) {
@@ -437,7 +441,9 @@ int main(void) {
     exit(1);
   }
 
+#ifdef _DEBUG
   printf("Starting on port %s\n", mg_get_option(server, "listening_port"));
+#endif
   for (;;) {
     mg_poll_server(server, 1000);
   }

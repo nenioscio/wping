@@ -15,10 +15,6 @@
 // Alternatively, you can license this library under a commercial
 // license, as set out in <http://cesanta.com/>.
 
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
-
 #ifdef HAVE_ARPA_INET_H
 #include <arpa/inet.h>
 #endif

@@ -17,5 +17,8 @@
 *.out
 *.app
 
+# vim
+*.swp
+
 # Build dir
 build

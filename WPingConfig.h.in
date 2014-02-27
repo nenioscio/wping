@@ -1,0 +1,3 @@
+// the configured options and settings for Wping
+#define WPing_VERSION_MAJOR @WPing_VERSION_MAJOR@
+#define WPing_VERSION_MINOR @WPing_VERSION_MINOR@

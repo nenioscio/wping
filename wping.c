@@ -185,8 +185,8 @@ int icmp_pkt_matches(struct ping_packet * pkt1, void* buf2, size_t bytes1, size_
 #endif
 
     /* package shares sequence and if pkt2 is of type ECHOREPLY packages share id  */
-    if ( pkt2->hdr.icmp_hun.ih_idseq.icd_seq == pkt2->hdr.icmp_hun.ih_idseq.icd_seq &&
-            (pkt1->hdr.icmp_hun.ih_idseq.icd_id == pkt2->hdr.icmp_hun.ih_idseq.icd_id) ) {
+    if ( pkt2->hdr.icmp_seq == pkt2->hdr.icmp_seq &&
+            (pkt1->hdr.icmp_id == pkt2->hdr.icmp_id) ) {
         /* further check if message is equal */
         if (!memcmp(pkt1->hdr.icmp_data, pkt2->hdr.icmp_data, DATASIZE)) return 1;
     }
@@ -245,7 +245,7 @@ void display_ping_pkt(void *buf, size_t bytes)
         inet_ntop(AF_INET, &icmp->icmp_hun.ih_gwaddr, ipbuf, INET_ADDRSTRLEN));
 }
 
-int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int timeout) {
+int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int timeout, int *icmp_type, int *icmp_code) {
     struct ping_packet pkt;
     struct sockaddr_in r_addr;
     struct pollfd read_poll, write_poll;
@@ -349,7 +349,9 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int timeout) {
                 display_ping_pkt(buf, readsize);
                 printf("icmp_type: %d\n", icmp->icmp_type);
 #endif
-                retval = icmp->icmp_type;
+                *icmp_type = icmp->icmp_type;
+                *icmp_code = icmp->icmp_code;
+                retval = 0;
                 break;
             } 
 #ifdef _DEBUG
@@ -370,11 +372,17 @@ static int handler(struct mg_connection *conn) {
   char dst[500], timeoutstr[500];
   char *errmsg = NULL;
   char *endptr = NULL;
+  char *jsonout = NULL;
   const char *accept;
   int  timeout;
+  int  icmp_type;
+  int  icmp_code;
+  int  retval;
+  int  alive = 1;
 
   struct hostent *dst_host;
   struct sockaddr_in addr;
+  json_t *jsonoutdata;
 
   if (strcmp(conn->uri, "/ping") == 0) {
     // User has submitted a form, show submitted data and a variable value
@@ -385,9 +393,14 @@ static int handler(struct mg_connection *conn) {
 
     // Send reply to the client, showing submitted form values.
     // POST data is in conn->content, data length is in conn->content_len
-    mg_send_header(conn, "Content-Type", "text/plain");
+    accept=mg_get_header(conn, "Accept");
+    if ( (accept != NULL ) && (strstr(accept, "application/json") != NULL)) {
+        mg_send_header(conn, "Content-Type", "application/json");
+    } else {
+        mg_send_header(conn, "Content-Type", "text/plain");
+    }
 #ifdef _DEBUG
-    if ((accept=mg_get_header(conn, "Accept")) != NULL) {
+    if (accept != NULL) {
         mg_printf_data(conn,
                         "Accept: %s\n", accept);
     }
@@ -415,11 +428,31 @@ static int handler(struct mg_connection *conn) {
         mg_printf_data(conn,
                         "Timeout invalid: %s\n", timeoutstr);
     } else {
-        mg_printf_data(conn,
-                       "Ping returned: %d\n", ping(globsd, &addr, (char **) &errmsg, timeout));
-        if (errmsg != NULL) {
+        icmp_type = icmp_code = 0;
+        retval = ping(globsd, &addr, (char **) &errmsg, timeout, &icmp_type, &icmp_code);
+        if (retval != 0 || icmp_type != 0) {
+            alive = 0;
+        }
+        if ( (accept != NULL ) && (strstr(accept, "application/json") != NULL)) {
+            if (errmsg == NULL) {
+                errmsg = &"";
+            }
+            jsonoutdata = json_pack("{sbsssisi}", "status", alive, "status_message", 
+                                    errmsg, "icmp_type", icmp_type, "icmp_code", icmp_code);
+            jsonout    = json_dumps(jsonoutdata, 1024);
+            mg_send_data(conn, jsonout, strlen(jsonout));
+            json_decref(jsonoutdata);
+            free(jsonout);
+        } else {
             mg_printf_data(conn,
-                            "Errmsg was: %s\n", errmsg);
+                           "Destination alive: %d\n"
+                           "Icmp_response_type: %d\n"
+                           "Icmp_response_code: %d\n", 
+                            alive, icmp_type, icmp_code);
+            if (errmsg != NULL) {
+                mg_printf_data(conn,
+                                "Errmsg was: %s\n", errmsg);
+            }
         }
     }
   } else {

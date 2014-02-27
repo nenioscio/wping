@@ -7,14 +7,28 @@ Web daemon designed to test reachability of targets using ICMP Echo requests (ak
 
 Client specifies target using dst parameter for IPv4 destination specification and timeoutms for timeout.
 
-  curl "http://localhost:8080/ping?dst=127.0.0.1&timeoutms=100"
+  ```curl "http://localhost:8080/ping?dst=reachable&timeoutms=100"```
+
+```
+Destination alive: 1
+Icmp_response_type: 0
+Icmp_response_code: 0
+
+```
+
+Daemon is designed to provide json output if request (Accept header):
+
+  ```curl -H "Accept: application/json" "http://localhost:8080/ping?dst=reachable&timeoutms=100"```
+
+```
+{"status": true, "status_message": "", "icmp_type": 0, "icmp_code": 0}
+```
 
 ***TODOS:***<br>
 *   Add multiple packet handling
 
 *   Daemonize
 
-*   Add json output
 
 -----
 

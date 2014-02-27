@@ -2,9 +2,7 @@
 #include <WPingConfig.h>
 #endif
 
-#ifdef _LINUX
 #define _GNU_SOURCE 1
-#endif
 
 #include <stdio.h>
 #include <unistd.h>
@@ -416,7 +414,7 @@ static int handler(struct mg_connection *conn) {
                         "Timeout invalid: %s\n", timeoutstr);
     } else {
         mg_printf_data(conn,
-                       "Ping says: %d\n", ping(globsd, &addr, (char **) &errmsg, timeout));
+                       "Ping returned: %d\n", ping(globsd, &addr, (char **) &errmsg, timeout));
         if (errmsg != NULL) {
             mg_printf_data(conn,
                             "Errmsg was: %s\n", errmsg);

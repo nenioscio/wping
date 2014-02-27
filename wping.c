@@ -97,10 +97,14 @@ static const char *html_form =
 int globsd = -1;
 
 int set_socket_rcvbuf(int sd, const int val_rcvbuf) {
+/* Tests showed that 'disabling the socket buffer on AIX
+ *  does break polling on the socket */
+#ifndef _AIX
     int orig_rcvbuf, orig_rcvbuf_size;
     if (setsockopt(sd, SOL_SOCKET, SO_RCVBUF, (char *)(&val_rcvbuf), sizeof(val_rcvbuf))!= 0) {
         return errno;
     }
+#endif
     return 0;
 }
 
@@ -156,16 +160,18 @@ int icmp_pkt_matches(struct ping_packet * pkt1, void* buf2, size_t bytes1, size_
     printf("\n");
 #endif
 
-    ptr = (unsigned char *) buf2;
-    ip = (struct ip *) buf2;
-    ptr += ip->ip_hl * 4;
-    pkt2 = (struct ping_packet *) ptr;
+    ptr      = (unsigned char *) buf2;
+    ip       = (struct ip *) buf2;
+    ptr     += ip->ip_hl * 4;
+    bytes2  -= ip->ip_hl * 4;
+    pkt2     = (struct ping_packet *) ptr;
     
-    if ( (pkt2->hdr.icmp_type == ICMP_DEST_UNREACH) ) {
-        ptr = (unsigned char *) pkt2->hdr.icmp_data;
-        ip  = (struct ip *) ptr;
-        ptr += ip->ip_hl*4;
-        pkt2 = (struct ping_packet *) ptr;
+    if ( pkt2->hdr.icmp_type == ICMP_DEST_UNREACH ) {
+        ptr      = (unsigned char *) pkt2->hdr.icmp_data;
+        ip       = (struct ip *) ptr;
+        ptr     += ip->ip_hl*4;
+        bytes2  -= ip->ip_hl*4;
+        pkt2     = (struct ping_packet *) ptr;
     }
 
 #ifdef _DEBUG
@@ -218,7 +224,7 @@ unsigned short icmp_calc_checksum(void *b, int len)
 /*--------------------------------------------------------------------*/
 void display_ping_pkt(void *buf, size_t bytes)
 {	size_t i;
-	struct ip *ip = buf;
+	struct ip *ip   = buf;
 	icmphdr_t *icmp = buf+ip->ip_hl*4;
     char ipbuf[INET_ADDRSTRLEN];
 
@@ -252,15 +258,15 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int timeout) {
     icmphdr_t *icmp;
     int retval = 0;
 
-    read_poll.fd = sd;
-    read_poll.events = POLLRDNORM;
-    read_poll.revents = 0;
+    read_poll.fd       = sd;
+    read_poll.events   = POLLRDNORM;
+    read_poll.revents  = 0;
 
-    write_poll.fd = sd;
-    write_poll.events = POLLOUT;
+    write_poll.fd      = sd;
+    write_poll.events  = POLLOUT;
     write_poll.revents = 0;
-    
-    r_addr_len = sizeof(r_addr);
+
+    r_addr_len         = sizeof(r_addr);
 
     /* clear socket */
     if (set_socket_rcvbuf(sd, MAX_MTU)!= 0) {
@@ -396,8 +402,8 @@ static int handler(struct mg_connection *conn) {
         return MG_REQUEST_PROCESSED;
     }
     bzero(&addr, sizeof(addr));
-    addr.sin_family = dst_host->h_addrtype;
-    addr.sin_port = 0;
+    addr.sin_family      = dst_host->h_addrtype;
+    addr.sin_port        = 0;
     addr.sin_addr.s_addr = *(long*)dst_host->h_addr;
 
     timeout = strtol(timeoutstr, &endptr, 10);

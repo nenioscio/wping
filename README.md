@@ -17,10 +17,12 @@ Daemonize
 
 Bundled Software:
 
-mongoose<br>
-  Copyright (c) 2004-2013 Sergey Lyubka <valenok at gmail dot com><br> Copyright (c) 2013-2014 Cesanta Software Limited<br>
+*   mongoose
 
-solarisfixes.h<br> 
-  Copyright (c) 2009-2012, Salvatore Sanfilippo <antirez at gmail dot com>
+    Copyright (c) 2004-2013 Sergey Lyubka <valenok at gmail dot com>
+    
+    Copyright (c) 2013-2014 Cesanta Software Limited
 
+*   solarisfixes.h
+    Copyright (c) 2009-2012, Salvatore Sanfilippo <antirez at gmail dot com>
 

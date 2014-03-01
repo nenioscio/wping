@@ -51,15 +51,13 @@
 
 
 #define MAX_MTU       2048
-#ifndef _AIX
 #define CLEAR_MTU        0
-#else
-#define CLEAR_MTU        1
-#endif
 
 #define PACKETSIZE      64
 #define ICMPHDRSIZE      8
 #define DATASIZE          (PACKETSIZE-ICMPHDRSIZE)
+
+#define WPING_BUFSIZE 8192
 
 struct ping_packet
 {
@@ -166,6 +164,9 @@ int icmp_pkt_matches(struct ping_packet * pkt1, void* buf2, size_t bytes1, size_
     bytes2  -= ip->ip_hl * 4;
     pkt2     = (struct ping_packet *) ptr;
     
+    if ( pkt2->hdr.icmp_type == ICMP_ECHO ) {
+        return 0;
+    }
     if ( pkt2->hdr.icmp_type == ICMP_DEST_UNREACH ) {
         ptr      = (unsigned char *) pkt2->hdr.icmp_data;
         ip       = (struct ip *) ptr;
@@ -368,7 +369,60 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int timeout, int 
     return retval;
 } 
 
-static int handler(struct mg_connection *conn) {
+/**
+ * resolve IPv4 in a threadsave manner in AIX 5+, Solaris, Linux
+ * (and possibly others)
+ * using gethostbyname variants
+ * 
+ * addr: target result buffer (struct sockaddr_in)
+ * hostname: ip definition to resolve
+ *
+ */
+int ipv4_resolv(struct sockaddr_in *addr, const char *hostname) {
+  struct hostent *target = NULL;
+#if defined(sun) || defined(__sun) || defined(__linux__)
+  struct hostent *buf = NULL;
+  int h_errnop;
+  int retval = 1;
+
+  buf = calloc(1, WPING_BUFSIZE);
+
+  if (!buf) {
+    return 0;
+  }
+#if defined(sun) || defined(__sun)
+    target = gethostbyname_r(hostname, buf, (char *)buf + sizeof(struct hostent),
+                             WPING_BUFSIZE - sizeof(struct hostent), &h_errnop);
+
+#elif defined(__linux__)
+    (void)gethostbyname_r(hostname, buf, (char *)buf + sizeof(struct hostent),
+                             WPING_BUFSIZE - sizeof(struct hostent), &target, &h_errnop);
+#endif
+
+#else
+    target = gethostbyname(hostname);
+#endif
+
+    /* extract result */
+    if(target != NULL) {
+        bzero(addr, sizeof(struct sockaddr_in));
+        addr->sin_family      = target->h_addrtype;
+        addr->sin_port        = 0;
+        addr->sin_addr.s_addr = *(long*)target->h_addr;
+    } else {
+        retval = 0;
+    }
+
+#if defined(sun) || defined(__sun) || defined(__linux__)
+        free(buf);
+#endif
+
+    return retval;
+
+}
+    
+
+static int handler(struct mg_connection *conn, enum mg_event ev) {
   char dst[500], timeoutstr[500];
   char *errmsg = NULL;
   char *endptr = NULL;
@@ -379,11 +433,19 @@ static int handler(struct mg_connection *conn) {
   int  icmp_code;
   int  retval;
   int  alive = 1;
+  int  wantjson = 0;
 
   struct hostent *dst_host;
   struct sockaddr_in addr;
   json_t *jsonoutdata;
 
+#ifdef _DEBUG
+    printf("mg_event %d\n", ev);
+#endif
+
+  if (ev != MG_REQ_BEGIN) {
+    return MG_TRUE;
+  }
   if (strcmp(conn->uri, "/ping") == 0) {
     // User has submitted a form, show submitted data and a variable value
     // Parse form data. var1 and var2 are guaranteed to be NUL-terminated
@@ -391,14 +453,15 @@ static int handler(struct mg_connection *conn) {
     mg_get_var(conn, "timeoutMs", timeoutstr, sizeof(timeoutstr));
 
 
-    // Send reply to the client, showing submitted form values.
-    // POST data is in conn->content, data length is in conn->content_len
+    // Check for json request and store in flag
     accept=mg_get_header(conn, "Accept");
     if ( (accept != NULL ) && (strstr(accept, "application/json") != NULL)) {
+        wantjson = 1;
+    }
+    if (wantjson){
         mg_send_header(conn, "Content-Type", "application/json");
     } else {
         mg_send_header(conn, "Content-Type", "text/plain");
-    }
 #ifdef _DEBUG
     if (accept != NULL) {
         mg_printf_data(conn,
@@ -412,16 +475,15 @@ static int handler(struct mg_connection *conn) {
                    conn->content_len, conn->content,
                    conn->content_len, dst, timeoutstr);
 #endif
+    }
 
-    dst_host = gethostbyname(dst);
-    if (dst_host == NULL) {
+
+    if (!ipv4_resolv(&addr, dst)) {
+    /*dst_host = gethostbyname(dst);
+    if (dst_host == NULL) {*/
         mg_printf_data(conn, "Could not resolv: %s, errno: %d\n", dst, errno);
         return MG_REQUEST_PROCESSED;
     }
-    bzero(&addr, sizeof(addr));
-    addr.sin_family      = dst_host->h_addrtype;
-    addr.sin_port        = 0;
-    addr.sin_addr.s_addr = *(long*)dst_host->h_addr;
 
     timeout = strtol(timeoutstr, &endptr, 10);
     if (endptr == NULL) {
@@ -433,9 +495,9 @@ static int handler(struct mg_connection *conn) {
         if (retval != 0 || icmp_type != 0) {
             alive = 0;
         }
-        if ( (accept != NULL ) && (strstr(accept, "application/json") != NULL)) {
+        if ( wantjson ) {
             if (errmsg == NULL) {
-                errmsg = &"";
+                errmsg = "";
             }
             jsonoutdata = json_pack("{sbsssisi}", "status", alive, "status_message", 
                                     errmsg, "icmp_type", icmp_type, "icmp_code", icmp_code);
@@ -463,11 +525,11 @@ static int handler(struct mg_connection *conn) {
   return MG_REQUEST_PROCESSED;
 }
 
-int main(void) {
-  struct mg_server *server = mg_create_server(NULL);
+int main(int argc, char *argv[]) {
+  struct mg_server *server = mg_create_server(NULL, handler);
   mg_set_option(server, "listening_port", "8080");
-  mg_set_request_handler(server, handler);
   char *errmsg;
+  int c;
 
   if ((globsd = setup_socket_inet_raw(getprotobyname("ICMP"), (char **) &errmsg)) < 0) {
     printf("%s\n", errmsg);

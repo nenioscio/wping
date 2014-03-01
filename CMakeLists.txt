@@ -43,5 +43,6 @@ target_os_libraries(wping)
 # add the binary tree to the search path for include files
 # so that we will find TutorialConfig.h
 include_directories("${PROJECT_BINARY_DIR}")
+include_directories("${PROJECT_SOURCE_DIR}")
 include_directories("${PROJECT_BINARY_DIR}/3rdparty/jansson/include")
 include_directories("${PROJECT_SOURCE_DIR}/3rdparty/mongoose")

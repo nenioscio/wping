@@ -18,7 +18,7 @@ Icmp_response_code: 0
 
 Daemon is designed to provide json output if request (Accept header):
 
-  ```curl -H "Accept: application/json" "http://localhost:8080/ping?dst=reachable&timeoutms=100"```
+  ```curl -H "Accept: application/json" "http://localhost:8080/ping?dst=127.0.0.1&timeoutms=100"```
 
 ```
 {"status": true, "status_message": "", "icmp_type": 0, "icmp_code": 0}

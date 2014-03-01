@@ -40,6 +40,18 @@
         } while (0)
 #endif
 
+#ifndef timersub
+#define timersub(tvp, uvp, vvp)                                         \
+    do {                                                                \
+        (vvp)->tv_sec = (tvp)->tv_sec - (uvp)->tv_sec;                  \
+        (vvp)->tv_usec = (tvp)->tv_usec - (uvp)->tv_usec;               \
+        if ((vvp)->tv_usec < 0) {                                       \
+            (vvp)->tv_sec--;                                            \
+            (vvp)->tv_usec += 1000000;                                  \
+        }                                                               \
+    } while (0)
+#endif
+
 #ifdef HAVE_ARPA_INET_H
 #include <arpa/inet.h>
 #endif
@@ -144,17 +156,17 @@ int icmp_pkt_matches(struct ping_packet * pkt1, void* buf2, size_t bytes1, size_
     printf("echo request");
     ptr = (unsigned char *) pkt1;
     for (i = 0; i < bytes1; i++) {
-		if ( !(i & 15) ) printf("\n%04X:  ", (unsigned int) i);
-		printf("%02X ", ((unsigned char*)ptr)[i]);
-	}
+        if ( !(i & 15) ) printf("\n%04X:  ", (unsigned int) i);
+        printf("%02X ", ((unsigned char*)ptr)[i]);
+    }
     printf("\n");
 
     printf("echo response");
     ptr = (unsigned char *) buf2;
     for (i = 0; i < bytes2; i++) {
-		if ( !(i & 15) ) printf("\n%04X:  ", (unsigned int) i);
-		printf("%02X ", ((unsigned char*)ptr)[i]);
-	}
+        if ( !(i & 15) ) printf("\n%04X:  ", (unsigned int) i);
+        printf("%02X ", ((unsigned char*)ptr)[i]);
+    }
     printf("\n");
 #endif
 
@@ -164,6 +176,7 @@ int icmp_pkt_matches(struct ping_packet * pkt1, void* buf2, size_t bytes1, size_
     bytes2  -= ip->ip_hl * 4;
     pkt2     = (struct ping_packet *) ptr;
     
+    /* ignroe foreign echo requests */
     if ( pkt2->hdr.icmp_type == ICMP_ECHO ) {
         return 0;
     }
@@ -179,9 +192,9 @@ int icmp_pkt_matches(struct ping_packet * pkt1, void* buf2, size_t bytes1, size_
     printf("echo response");
     ptr = (unsigned char *) pkt2;
     for (i = 0; i < bytes2; i++) {
-		if ( !(i & 15) ) printf("\n%04X:  ", (unsigned int) i);
-		printf("%02X ", ((unsigned char*)ptr)[i]);
-	}
+        if ( !(i & 15) ) printf("\n%04X:  ", (unsigned int) i);
+        printf("%02X ", ((unsigned char*)ptr)[i]);
+    }
     printf("\n");
 #endif
 
@@ -205,48 +218,48 @@ int fill_msg(void *msg, int size){
     return i;
 }
 
-unsigned short icmp_calc_checksum(void *b, int len)
-{	unsigned short *buf = b;
-	unsigned int sum=0;
-	unsigned short result;
+unsigned short icmp_calc_checksum(void *b, int len) {
+    unsigned short *buf = b;
+    unsigned int sum=0;
+    unsigned short result;
 
-	for ( sum = 0; len > 1; len -= 2 )
-		sum += *buf++;
-	if ( len == 1 )
-		sum += *(unsigned char*)buf;
-	sum = (sum >> 16) + (sum & 0xFFFF);
-	sum += (sum >> 16);
-	result = ~sum;
-	return result;
+    for ( sum = 0; len > 1; len -= 2 )
+        sum += *buf++;
+    if ( len == 1 )
+        sum += *(unsigned char*)buf;
+    sum = (sum >> 16) + (sum & 0xFFFF);
+    sum += (sum >> 16);
+    result = ~sum;
+    return result;
 }
 
 /*--------------------------------------------------------------------*/
 /*--- display - present echo info                                  ---*/
 /*--------------------------------------------------------------------*/
-void display_ping_pkt(void *buf, size_t bytes)
-{	size_t i;
-	struct ip *ip   = buf;
-	icmphdr_t *icmp = buf+ip->ip_hl*4;
+void display_ping_pkt(void *buf, size_t bytes) {
+    size_t i;
+    struct ip *ip   = buf;
+    icmphdr_t *icmp = buf+ip->ip_hl*4;
     char ipbuf[INET_ADDRSTRLEN];
 
-	printf("----------------\n");
-	for ( i = 0; i < bytes; i++ )
-	{
-		if ( !(i & 15) ) printf("\n%04X:  ", (unsigned int) i);
-		printf("%02X ", ((unsigned char*)buf)[i]);
-	}
-	printf("\n");
-	printf("IPv%d: hdr-size=%d pkt-size=%d protocol=%d TTL=%d src=%s ",
-		ip->ip_v, ip->ip_hl*4, ntohs(ip->ip_len), ip->ip_p,
-		ip->ip_ttl, inet_ntop(AF_INET, &ip->ip_src, ipbuf, INET_ADDRSTRLEN));
-	printf("dst=%s\n", inet_ntop(AF_INET, &ip->ip_dst, ipbuf, INET_ADDRSTRLEN));
+    printf("----------------\n");
+    for ( i = 0; i < bytes; i++ )
+    {
+        if ( !(i & 15) ) printf("\n%04X:  ", (unsigned int) i);
+        printf("%02X ", ((unsigned char*)buf)[i]);
+    }
+    printf("\n");
+    printf("IPv%d: hdr-size=%d pkt-size=%d protocol=%d TTL=%d src=%s ",
+        ip->ip_v, ip->ip_hl*4, ntohs(ip->ip_len), ip->ip_p,
+        ip->ip_ttl, inet_ntop(AF_INET, &ip->ip_src, ipbuf, INET_ADDRSTRLEN));
+    printf("dst=%s\n", inet_ntop(AF_INET, &ip->ip_dst, ipbuf, INET_ADDRSTRLEN));
     printf("ICMP: type[%d/%d] checksum[%d] id[%d] seq[%d] gateway[%s]\n",
         icmp->icmp_type, icmp->icmp_code, ntohs(icmp->icmp_cksum),
         icmp->icmp_hun.ih_idseq.icd_id, icmp->icmp_hun.ih_idseq.icd_seq, 
         inet_ntop(AF_INET, &icmp->icmp_hun.ih_gwaddr, ipbuf, INET_ADDRSTRLEN));
 }
 
-int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int timeout, int *icmp_type, int *icmp_code) {
+int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int *icmp_type, int *icmp_code) {
     struct ping_packet pkt;
     struct sockaddr_in r_addr;
     struct pollfd read_poll, write_poll;
@@ -298,8 +311,8 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int timeout, int 
         *errmsg = (char*) &"gettime error";
         return -4;
     }
-    tmp_timeval.tv_sec = timeout / 1000;
-    tmp_timeval.tv_usec = (timeout % 1000) * 1000;
+    tmp_timeval.tv_sec = *timeout / 1000;
+    tmp_timeval.tv_usec = (*timeout % 1000) * 1000;
     timeradd(&start_timeval, &tmp_timeval, &end_timeval);
     /* loop for response/timeout handling */
     while (1) {
@@ -309,6 +322,7 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int timeout, int 
         }
         if (timercmp(&tmp_timeval, &end_timeval, >)) {
             *errmsg=(char *)&"timeout icmp";
+            *timeout = -1;
             retval = -6;
             break;
         }
@@ -352,6 +366,12 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int timeout, int 
 #endif
                 *icmp_type = icmp->icmp_type;
                 *icmp_code = icmp->icmp_code;
+                if (gettimeofday(&tmp_timeval, NULL) == -1) {
+                    *errmsg = (char*) &"gettime error";
+                    return -4;
+                }
+                timersub(&tmp_timeval, &start_timeval, &end_timeval);
+                *timeout = end_timeval.tv_usec / 1000 + end_timeval.tv_sec * 1000;
                 retval = 0;
                 break;
             } 
@@ -379,17 +399,17 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int timeout, int 
  *
  */
 int ipv4_resolv(struct sockaddr_in *addr, const char *hostname) {
-  struct hostent *target = NULL;
+    struct hostent *target = NULL;
 #if defined(sun) || defined(__sun) || defined(__linux__)
-  struct hostent *buf = NULL;
-  int h_errnop;
-  int retval = 1;
+    struct hostent *buf = NULL;
+    int h_errnop;
+    int retval = 1;
 
-  buf = calloc(1, WPING_BUFSIZE);
+    buf = calloc(1, WPING_BUFSIZE);
 
-  if (!buf) {
-    return 0;
-  }
+    if (!buf) {
+        return 0;
+    }
 #if defined(sun) || defined(__sun)
     target = gethostbyname_r(hostname, buf, (char *)buf + sizeof(struct hostent),
                              WPING_BUFSIZE - sizeof(struct hostent), &h_errnop);
@@ -423,106 +443,116 @@ int ipv4_resolv(struct sockaddr_in *addr, const char *hostname) {
     
 
 static int handler(struct mg_connection *conn, enum mg_event ev) {
-  char dst[500], timeoutstr[500];
-  char *errmsg = NULL;
-  char *endptr = NULL;
-  char *jsonout = NULL;
-  const char *accept;
-  int  timeout;
-  int  icmp_type;
-  int  icmp_code;
-  int  retval;
-  int  alive = 1;
-  int  wantjson = 0;
+    char dst[500], timeoutstr[500], buf[500];
+    char *errmsg = NULL;
+    char *endptr = NULL;
+    char *jsonout = NULL;
+    const char *accept;
+    int  timeout;
+    int  icmp_type;
+    int  icmp_code;
+    int  retval;
+    int  alive = 1;
+    int  wantjson = 0;
 
-  struct hostent *dst_host;
-  struct sockaddr_in addr;
-  json_t *jsonoutdata;
+    struct hostent *dst_host;
+    struct sockaddr_in addr;
+    json_t *jsonoutdata;
 
 #ifdef _DEBUG
     printf("mg_event %d\n", ev);
 #endif
 
-  if (ev != MG_REQ_BEGIN) {
-    return MG_TRUE;
-  }
-  if (strcmp(conn->uri, "/ping") == 0) {
-    // User has submitted a form, show submitted data and a variable value
-    // Parse form data. var1 and var2 are guaranteed to be NUL-terminated
-    mg_get_var(conn, "dst", dst, sizeof(dst));
-    mg_get_var(conn, "timeoutMs", timeoutstr, sizeof(timeoutstr));
-
-
-    // Check for json request and store in flag
-    accept=mg_get_header(conn, "Accept");
-    if ( (accept != NULL ) && (strstr(accept, "application/json") != NULL)) {
-        wantjson = 1;
+    if (ev != MG_REQ_BEGIN) {
+        return MG_TRUE;
     }
-    if (wantjson){
-        mg_send_header(conn, "Content-Type", "application/json");
-    } else {
-        mg_send_header(conn, "Content-Type", "text/plain");
-#ifdef _DEBUG
-    if (accept != NULL) {
-        mg_printf_data(conn,
-                        "Accept: %s\n", accept);
-    }
-    mg_printf_data(conn,
-                   "Submitted data: [%.*s]\n"
-                   "Submitted data length: %d bytes\n"
-                   "Destination: [%s]\n"
-                   "Timeout(ms):     [%s]\n",
-                   conn->content_len, conn->content,
-                   conn->content_len, dst, timeoutstr);
-#endif
-    }
+    if (strcmp(conn->uri, "/ping") == 0) {
+        // User has submitted a form, show submitted data and a variable value
+        // Parse form data. var1 and var2 are guaranteed to be NUL-terminated
+        mg_get_var(conn, "dst", dst, sizeof(dst));
+        mg_get_var(conn, "timeoutMs", timeoutstr, sizeof(timeoutstr));
 
 
-    if (!ipv4_resolv(&addr, dst)) {
-    /*dst_host = gethostbyname(dst);
-    if (dst_host == NULL) {*/
-        mg_printf_data(conn, "Could not resolv: %s, errno: %d\n", dst, errno);
-        return MG_REQUEST_PROCESSED;
-    }
-
-    timeout = strtol(timeoutstr, &endptr, 10);
-    if (endptr == NULL) {
-        mg_printf_data(conn,
-                        "Timeout invalid: %s\n", timeoutstr);
-    } else {
-        icmp_type = icmp_code = 0;
-        retval = ping(globsd, &addr, (char **) &errmsg, timeout, &icmp_type, &icmp_code);
-        if (retval != 0 || icmp_type != 0) {
-            alive = 0;
+        // Check for json request and store in flag
+        accept=mg_get_header(conn, "Accept");
+        if ( (accept != NULL ) && (strstr(accept, "application/json") != NULL)) {
+            wantjson = 1;
         }
-        if ( wantjson ) {
-            if (errmsg == NULL) {
-                errmsg = "";
-            }
-            jsonoutdata = json_pack("{sbsssisi}", "status", alive, "status_message", 
-                                    errmsg, "icmp_type", icmp_type, "icmp_code", icmp_code);
-            jsonout    = json_dumps(jsonoutdata, 1024);
-            mg_send_data(conn, jsonout, strlen(jsonout));
-            json_decref(jsonoutdata);
-            free(jsonout);
+        if (wantjson){
+            mg_send_header(conn, "Content-Type", "application/json");
         } else {
+            mg_send_header(conn, "Content-Type", "text/plain");
+#ifdef _DEBUG
+        if (accept != NULL) {
             mg_printf_data(conn,
-                           "Destination alive: %d\n"
-                           "Icmp_response_type: %d\n"
-                           "Icmp_response_code: %d\n", 
-                            alive, icmp_type, icmp_code);
-            if (errmsg != NULL) {
+                            "Accept: %s\n", accept);
+        }
+        mg_printf_data(conn,
+                       "Submitted data: [%.*s]\n"
+                       "Submitted data length: %d bytes\n"
+                       "Destination: [%s]\n"
+                       "Timeout(ms):     [%s]\n",
+                       conn->content_len, conn->content,
+                       conn->content_len, dst, timeoutstr);
+#endif
+        }
+
+
+        if (!ipv4_resolv(&addr, dst)) {
+            if (wantjson) {
+                snprintf(buf, sizeof(buf) -1, "Could not resolv: %s, errno: %d", Dst, errno);
+                jsonoutdata = json_pack("{sbss}", "status", alive, "status_message",
+                                        buf);
+                jsonout    = json_dumps(jsonoutdata, 1024);
+                mg_send_data(conn, jsonout, strlen(jsonout));
+                json_decref(jsonoutdata);
+                free(jsonout);
+            } else {
+                mg_printf_data(conn, "Could not resolv: %s, errno: %d\n", dst, errno);
+            }
+            return MG_REQUEST_PROCESSED;
+        }
+
+        timeout = strtol(timeoutstr, &endptr, 10);
+        if (endptr == NULL) {
+            mg_printf_data(conn,
+                            "Timeout invalid: %s\n", timeoutstr);
+        } else {
+            icmp_type = icmp_code = 0;
+            retval = ping(globsd, &addr, (char **) &errmsg, &timeout, &icmp_type, &icmp_code);
+            if (retval != 0 || icmp_type != 0) {
+                alive = 0;
+            }
+            if ( wantjson ) {
+                if (errmsg == NULL) {
+                    errmsg = "";
+                }
+                jsonoutdata = json_pack("{sbsssisisi}", "status", alive, "status_message", 
+                                        errmsg, "icmp_type", icmp_type, "icmp_code", icmp_code,
+                                        "response_time", timeout);
+                jsonout    = json_dumps(jsonoutdata, 1024);
+                mg_send_data(conn, jsonout, strlen(jsonout));
+                json_decref(jsonoutdata);
+                free(jsonout);
+            } else {
                 mg_printf_data(conn,
-                                "Errmsg was: %s\n", errmsg);
+                               "Destination alive: %d\n"
+                               "Icmp_response_type: %d\n"
+                               "Icmp_response_code: %d\n", 
+                               "Icmp_response_time: %d\n", 
+                                alive, icmp_type, icmp_code, timeout);
+                if (errmsg != NULL) {
+                    mg_printf_data(conn,
+                                    "Errmsg was: %s\n", errmsg);
+                }
             }
         }
+    } else {
+        // Show HTML form.
+        mg_send_data(conn, html_form, strlen(html_form));
     }
-  } else {
-    // Show HTML form.
-    mg_send_data(conn, html_form, strlen(html_form));
-  }
 
-  return MG_REQUEST_PROCESSED;
+    return MG_REQUEST_PROCESSED;
 }
 
 int main(int argc, char *argv[]) {

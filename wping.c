@@ -26,6 +26,10 @@
 #include <sys/time.h>
 /* add json lib */
 #include <jansson.h>
+/* getopt long */
+#include <getopt.h>
+#include <sys/wait.h>
+#include <sys/stat.h>
 
 /* wor*/
 #ifndef timeradd
@@ -105,6 +109,17 @@ static const char *html_form =
   "</form></body></html>";
 
 int globsd = -1;
+int exit_flag = 0;
+
+static void __cdecl signal_handler(int sig_num) {
+    signal(sig_num, signal_handler);
+
+    if (sig_num == SIGCHLD) {
+        while (waitpid(-1, &sig_num, WNOHANG) > 0) {}
+    } else {
+        exit_flag = sig_num;
+    }
+}
 
 int set_socket_rcvbuf(int sd, const int val_rcvbuf) {
 /* Tests showed that 'disabling the socket buffer on AIX
@@ -500,7 +515,7 @@ static int handler(struct mg_connection *conn, enum mg_event ev) {
 
         if (!ipv4_resolv(&addr, dst)) {
             if (wantjson) {
-                snprintf(buf, sizeof(buf) -1, "Could not resolv: %s, errno: %d", Dst, errno);
+                snprintf(buf, sizeof(buf) -1, "Could not resolv: %s, errno: %d", dst, errno);
                 jsonoutdata = json_pack("{sbss}", "status", alive, "status_message",
                                         buf);
                 jsonout    = json_dumps(jsonoutdata, 1024);
@@ -555,23 +570,155 @@ static int handler(struct mg_connection *conn, enum mg_event ev) {
     return MG_REQUEST_PROCESSED;
 }
 
-int main(int argc, char *argv[]) {
-  struct mg_server *server = mg_create_server(NULL, handler);
-  mg_set_option(server, "listening_port", "8080");
-  char *errmsg;
-  int c;
+struct str_wping_options{
+    char *port;
+    char *pidfile;
+    int want_daemon;
+};
 
-  if ((globsd = setup_socket_inet_raw(getprotobyname("ICMP"), (char **) &errmsg)) < 0) {
-    printf("%s\n", errmsg);
-    exit(1);
-  }
+struct str_wping_options wping_options;
+
+void parse_args(int argc, char*argv[], struct str_wping_options *target) {
+    int c;
+
+    /* defaults */
+    target->port = NULL;
+    target->pidfile = NULL;
+    target->want_daemon = 1;
+
+    while (1) {
+        int option_index = 0;
+
+        static struct option long_options[] = {
+            {"foreground",  no_argument,        0,  'f'  },
+            {"port",        required_argument,  0,  'p' },
+            {"pidfile",     required_argument,  0,  'i' },
+            {"help",        no_argument,        0,  'h' }
+        };
+
+        c = getopt_long(argc, argv, "hfp:", long_options, &option_index);
+
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+            case 'f':
+                target->want_daemon = 0;
+                break;
+            case 'p':
+                target->port = strdup(optarg);
+                break;
+            case 'i':
+                target->pidfile = strdup(optarg);
+                break;
+            case 'h':
+            default:
+                printf( "Usage: %s [--foreground|-f] [--port=<port>|-p <port>]\n\n"
+                        "\t--foreground\tDo not setup deaemon\n"
+                        "\t--port=<port>\tport to bind onto\n"
+                        "\t--help\t\tThis message\n\n", argv[0]);
+                exit(-1);
+        }
+    }
+    if (target->port == NULL) {
+        target->port = strdup("8080");
+    }
+    if (target->pidfile == NULL) {
+        target->pidfile = strdup("/var/run/wping/wping.pid");
+    }
+}
+
+void clean_options(struct str_wping_options *target) {
+    if (target->port != NULL) {
+        free(target->port);
+    }
+    if (target->port != NULL) {
+        free(target->pidfile);
+    }
+}
+
+int main(int argc, char *argv[]) {
+    char *errmsg;
+    char buf[WPING_BUFSIZE];
+
+    /* test socket first */
+    if ((globsd = setup_socket_inet_raw(getprotobyname("ICMP"), (char **) &errmsg)) < 0) {
+        printf("%s\n", errmsg);
+        exit(1);
+    }
+
+    parse_args(argc, argv, &wping_options); 
+
+    if (wping_options.want_daemon) {
+        struct stat pid_file;
+        int pid_file_fd;
+        size_t write_len;
+        pid_t pid;
+        
+        pid = fork();
+
+        if (pid < 0) {
+            printf("%s: Error forking daemon\n", argv[0]);
+            exit(1);
+        }
+        if (pid == 0) {
+
+            umask(0);
+            pid_t sid;
+            sid = setsid();
+            if (sid < 0) {
+                //printf("%s: Error calling setsid()\n", argv[0]);
+                exit(1);
+            }
+
+            if ((chdir("/")) < 0) {
+                //printf("%s: Could not change directory\n", argv[0]);
+                exit(1);
+            }
+
+            close(STDIN_FILENO);
+            close(STDOUT_FILENO);
+            close(STDERR_FILENO);
+
+            signal(SIGTERM, signal_handler);
+            signal(SIGINT, signal_handler);
+            signal(SIGCHLD, signal_handler);
+
+            /* create pid file */
+            pid_file_fd = open(wping_options.pidfile, O_CREAT|O_EXCL|O_WRONLY, 00644);
+            pid = getpid();
+            write_len = snprintf(buf, sizeof(buf)-1, "%d\n", pid);
+            write(pid_file_fd, buf, write_len);
+            close(pid_file_fd);
+        } else {
+            int status = 0;
+            
+            /* wait for pidfile / or child exit */
+            while (stat(wping_options.pidfile, &pid_file) != 0) {
+                if (waitpid(-1, &status, WNOHANG) == pid) {
+                    printf("%s: It's dead jim. Initialization failed.\n", argv[0]);
+                    exit(1);
+                }
+                sleep(1);
+            }
+            exit(0);
+        }
+    }
+
+    struct mg_server *server = mg_create_server(NULL, handler);
+    mg_set_option(server, "listening_port", wping_options.port);
 
 #ifdef _DEBUG
-  printf("Starting on port %s\n", mg_get_option(server, "listening_port"));
+    printf("Starting on port %s\n", mg_get_option(server, "listening_port"));
 #endif
-  for (;;) {
-    mg_poll_server(server, 1000);
-  }
-  mg_destroy_server(&server);
-  return 0;
+    while (exit_flag == 0) {
+        mg_poll_server(server, 1000);
+    }
+    mg_destroy_server(&server);
+    if (wping_options.want_daemon) {
+        unlink(wping_options.pidfile);
+    }
+    clean_options(&wping_options);
+    return 0;
 }

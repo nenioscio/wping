@@ -27,9 +27,6 @@ Daemon is designed to provide json output if request (Accept header):
 ***TODOS:***<br>
 *   Add multiple packet handling
 
-*   Daemonize
-
-
 -----
 
 Bundled Software:

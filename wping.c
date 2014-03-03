@@ -85,7 +85,7 @@ struct ping_packet
 #define hdr pkt.hdr
 };
 
-/* ***TODO: use ping_stack for package retriest */
+/* ***TODO: use ping_stack for package resending */
 typedef struct ping_stack
 {
     struct ping_packet  *ps_packet;
@@ -104,14 +104,14 @@ static const char *html_form =
   "<html><body>PING example."
   "<form method=\"POST\" action=\"/ping\">"
   "Target Hostname/IPv4: <input type=\"text\" name=\"dst\" /> <br/>"
-  "Timeout: <input type=\"text\" name=\"timeout\" /> <br/>"
+  "Timeout (ms): <input type=\"text\" name=\"timeoutms\" /> <br/>"
   "<input type=\"submit\" />"
   "</form></body></html>";
 
 int globsd = -1;
 int exit_flag = 0;
 
-static void __cdecl signal_handler(int sig_num) {
+static void signal_handler(int sig_num) {
     signal(sig_num, signal_handler);
 
     if (sig_num == SIGCHLD) {
@@ -307,10 +307,13 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int
 
     /* prepare packet */
     bzero(&pkt, sizeof(pkt));
-    pkt.hdr.icmp_type        = ICMP_ECHO;
-    pkt.hdr.icmp_id  = getpid();
-    pkt.hdr.icmp_seq = htons(seq++);
-    if (fill_msg(pkt.hdr.icmp_data, DATASIZE) != DATASIZE) return -1;
+    pkt.hdr.icmp_type = ICMP_ECHO;
+    pkt.hdr.icmp_id   = getpid();
+    pkt.hdr.icmp_seq  = htons(seq++);
+    if (fill_msg(pkt.hdr.icmp_data, DATASIZE) != DATASIZE) { 
+        *errmsg = (char*) &"Error filiing Message";
+        return -1;
+    }
     pkt.hdr.icmp_cksum = icmp_calc_checksum(&pkt, sizeof(pkt));
 
     /* send packet */
@@ -553,7 +556,7 @@ static int handler(struct mg_connection *conn, enum mg_event ev) {
                 mg_printf_data(conn,
                                "Destination alive: %d\n"
                                "Icmp_response_type: %d\n"
-                               "Icmp_response_code: %d\n", 
+                               "Icmp_response_code: %d\n" 
                                "Icmp_response_time: %d\n", 
                                 alive, icmp_type, icmp_code, timeout);
                 if (errmsg != NULL) {
@@ -633,7 +636,7 @@ void clean_options(struct str_wping_options *target) {
     if (target->port != NULL) {
         free(target->port);
     }
-    if (target->port != NULL) {
+    if (target->pidfile != NULL) {
         free(target->pidfile);
     }
 }
@@ -654,6 +657,7 @@ int main(int argc, char *argv[]) {
         struct stat pid_file;
         int pid_file_fd;
         size_t write_len;
+        int null_fd;
         pid_t pid;
         
         pid = fork();
@@ -677,9 +681,14 @@ int main(int argc, char *argv[]) {
                 exit(1);
             }
 
+            // Cleanup FDs
             close(STDIN_FILENO);
             close(STDOUT_FILENO);
             close(STDERR_FILENO);
+            null_fd = open("/dev/null", O_RDWR);
+            dup2(null_fd,STDIN_FILENO);
+            dup2(null_fd,STDOUT_FILENO);
+            dup2(null_fd,STDERR_FILENO);
 
             signal(SIGTERM, signal_handler);
             signal(SIGINT, signal_handler);
@@ -702,8 +711,12 @@ int main(int argc, char *argv[]) {
                 }
                 sleep(1);
             }
+            clean_options(&wping_options);
             exit(0);
         }
+    } else {
+        /* reroute sigint only for valgrind */
+        signal(SIGINT, signal_handler);
     }
 
     struct mg_server *server = mg_create_server(NULL, handler);

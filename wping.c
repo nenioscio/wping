@@ -26,8 +26,6 @@
 #include <sys/time.h>
 /* add json lib */
 #include <jansson.h>
-/* getopt long */
-#include <getopt.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
 
@@ -601,16 +599,7 @@ void parse_args(int argc, char*argv[], struct str_wping_options *target) {
     target->want_daemon = 1;
 
     while (1) {
-        int option_index = 0;
-
-        static struct option long_options[] = {
-            {"foreground",  no_argument,        0,  'f'  },
-            {"port",        required_argument,  0,  'p' },
-            {"pidfile",     required_argument,  0,  'i' },
-            {"help",        no_argument,        0,  'h' }
-        };
-
-        c = getopt_long(argc, argv, "hfp:", long_options, &option_index);
+        c = getopt(argc, argv, "hfp:i:");
 
         if (c == -1) {
             break;
@@ -628,10 +617,11 @@ void parse_args(int argc, char*argv[], struct str_wping_options *target) {
                 break;
             case 'h':
             default:
-                printf( "Usage: %s [--foreground|-f] [--port=<port>|-p <port>]\n\n"
-                        "\t--foreground\tDo not setup deaemon\n"
-                        "\t--port=<port>\tport to bind onto\n"
-                        "\t--help\t\tThis message\n\n", argv[0]);
+                printf( "Usage: %s [-f] [-p <port>] [-p <pidfile>\n\n"
+                        "\t-f\tDo not setup deaemon (foreground mode)\n"
+                        "\t-p <port>\tport to bind onto\n"
+                        "\t-i <pidfile>\tpidfile to create\n"
+                        "\t-h\t\tThis message\n\n", argv[0]);
                 exit(-1);
         }
     }
@@ -713,9 +703,14 @@ int main(int argc, char *argv[]) {
 
             /* create pid file */
             pid_file_fd = open(wping_options.pidfile, O_CREAT|O_EXCL|O_WRONLY, 00644);
+            if (pid_file_fd == -1) {
+                exit(1);
+            }
             pid = getpid();
             write_len = snprintf(buf, sizeof(buf)-1, "%d\n", pid);
-            write(pid_file_fd, buf, write_len);
+            if (write_len != write(pid_file_fd, buf, write_len)) {
+                exit(1);
+            }
             close(pid_file_fd);
         } else {
             int status = 0;
@@ -735,7 +730,6 @@ int main(int argc, char *argv[]) {
         /* reroute sigint only for valgrind */
         signal(SIGINT, signal_handler);
     }
-
 
     struct mg_server *server = mg_create_server(NULL, handler);
     mg_set_option(server, "listening_port", wping_options.port);

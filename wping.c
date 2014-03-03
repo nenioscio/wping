@@ -110,6 +110,7 @@ static const char *html_form =
 
 int globsd = -1;
 int exit_flag = 0;
+pthread_mutex_t g_lock;
 
 static void signal_handler(int sig_num) {
     signal(sig_num, signal_handler);
@@ -418,10 +419,10 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int
  */
 int ipv4_resolv(struct sockaddr_in *addr, const char *hostname) {
     struct hostent *target = NULL;
+    int retval = 1;
 #if defined(sun) || defined(__sun) || defined(__linux__)
     struct hostent *buf = NULL;
     int h_errnop;
-    int retval = 1;
 
     buf = calloc(1, WPING_BUFSIZE);
 
@@ -438,7 +439,17 @@ int ipv4_resolv(struct sockaddr_in *addr, const char *hostname) {
 #endif
 
 #else
+#ifdef BSD
+    if (pthread_mutex_lock(&g_lock) != 0) {
+        return 0;
+    }
+#endif
     target = gethostbyname(hostname);
+#ifdef BSD
+    if (pthread_mutex_unlock(&g_lock) != 0) {
+        return 0;
+    }
+#endif
 #endif
 
     /* extract result */
@@ -645,13 +656,14 @@ int main(int argc, char *argv[]) {
     char *errmsg;
     char buf[WPING_BUFSIZE];
 
+
+    parse_args(argc, argv, &wping_options); 
+
     /* test socket first */
     if ((globsd = setup_socket_inet_raw(getprotobyname("ICMP"), (char **) &errmsg)) < 0) {
         printf("%s\n", errmsg);
         exit(1);
     }
-
-    parse_args(argc, argv, &wping_options); 
 
     if (wping_options.want_daemon) {
         struct stat pid_file;
@@ -659,7 +671,8 @@ int main(int argc, char *argv[]) {
         size_t write_len;
         int null_fd;
         pid_t pid;
-        
+
+            
         pid = fork();
 
         if (pid < 0) {
@@ -678,6 +691,10 @@ int main(int argc, char *argv[]) {
 
             if ((chdir("/")) < 0) {
                 //printf("%s: Could not change directory\n", argv[0]);
+                exit(1);
+            }
+
+            if (pthread_mutex_init(&g_lock, 0) != 0) {
                 exit(1);
             }
 
@@ -719,6 +736,7 @@ int main(int argc, char *argv[]) {
         signal(SIGINT, signal_handler);
     }
 
+
     struct mg_server *server = mg_create_server(NULL, handler);
     mg_set_option(server, "listening_port", wping_options.port);
 
@@ -733,5 +751,6 @@ int main(int argc, char *argv[]) {
         unlink(wping_options.pidfile);
     }
     clean_options(&wping_options);
+    pthread_mutex_destroy(&g_lock);
     return 0;
 }

@@ -28,6 +28,7 @@
 #include <jansson.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <pthread.h>
 
 /* wor*/
 #ifndef timeradd
@@ -481,6 +482,7 @@ static int handler(struct mg_connection *conn, enum mg_event ev) {
     int  retval;
     int  alive = 1;
     int  wantjson = 0;
+    int  *sd;
 
     struct hostent *dst_host;
     struct sockaddr_in addr;
@@ -498,6 +500,7 @@ static int handler(struct mg_connection *conn, enum mg_event ev) {
         // Parse form data. var1 and var2 are guaranteed to be NUL-terminated
         mg_get_var(conn, "dst", dst, sizeof(dst));
         mg_get_var(conn, "timeoutMs", timeoutstr, sizeof(timeoutstr));
+        sd = (int *) conn->server_param;
 
 
         // Check for json request and store in flag
@@ -546,7 +549,7 @@ static int handler(struct mg_connection *conn, enum mg_event ev) {
                             "Timeout invalid: %s\n", timeoutstr);
         } else {
             icmp_type = icmp_code = 0;
-            retval = ping(globsd, &addr, (char **) &errmsg, &timeout, &icmp_type, &icmp_code);
+            retval = ping(*sd, &addr, (char **) &errmsg, &timeout, &icmp_type, &icmp_code);
             if (retval != 0 || icmp_type != 0) {
                 alive = 0;
             }
@@ -586,6 +589,7 @@ struct str_wping_options{
     char *port;
     char *pidfile;
     int want_daemon;
+    int num_threads;
 };
 
 struct str_wping_options wping_options;
@@ -596,31 +600,36 @@ void parse_args(int argc, char*argv[], struct str_wping_options *target) {
     /* defaults */
     target->port = NULL;
     target->pidfile = NULL;
-    target->want_daemon = 1;
+    target->want_daemon = 0;
+    target->num_threads = 0;
 
     while (1) {
-        c = getopt(argc, argv, "hfp:i:");
+        c = getopt(argc, argv, "hdp:f:t:");
 
         if (c == -1) {
             break;
         }
 
         switch (c) {
-            case 'f':
-                target->want_daemon = 0;
+            case 'd':
+                target->want_daemon = 1;
                 break;
             case 'p':
                 target->port = strdup(optarg);
                 break;
-            case 'i':
+            case 'f':
                 target->pidfile = strdup(optarg);
+                break;
+            case 't':
+                target->num_threads = atol(optarg);
                 break;
             case 'h':
             default:
-                printf( "Usage: %s [-f] [-p <port>] [-p <pidfile>\n\n"
-                        "\t-f\tDo not setup deaemon (foreground mode)\n"
+                printf( "Usage: %s [-d] [-p <port>] [-f <pidfile>] [-t <Number of threads>]\n"
+                        "\t-d\tStart deaemon (background mode)\n"
                         "\t-p <port>\tport to bind onto\n"
-                        "\t-i <pidfile>\tpidfile to create\n"
+                        "\t-f <pidfile>\tpidfile to create\n"
+                        "\t-t <Number of threads>\tDefault mode does not\n"
                         "\t-h\t\tThis message\n\n", argv[0]);
                 exit(-1);
         }
@@ -640,6 +649,13 @@ void clean_options(struct str_wping_options *target) {
     if (target->pidfile != NULL) {
         free(target->pidfile);
     }
+}
+
+static void *serve(void *server) {
+    while (exit_flag == 0) {
+        mg_poll_server(server, 1000);
+    }
+    return NULL;
 }
 
 int main(int argc, char *argv[]) {
@@ -731,16 +747,45 @@ int main(int argc, char *argv[]) {
         signal(SIGINT, signal_handler);
     }
 
-    struct mg_server *server = mg_create_server(NULL, handler);
-    mg_set_option(server, "listening_port", wping_options.port);
+    if (wping_options.num_threads < 1) {
+        struct mg_server *server = mg_create_server(&globsd, handler);
+        mg_set_option(server, "listening_port", wping_options.port);
 
-#ifdef _DEBUG
-    printf("Starting on port %s\n", mg_get_option(server, "listening_port"));
-#endif
-    while (exit_flag == 0) {
-        mg_poll_server(server, 1000);
+    #ifdef _DEBUG
+        printf("Starting on port %s\n", mg_get_option(server, "listening_port"));
+    #endif
+        while (exit_flag == 0) {
+            mg_poll_server(server, 1000);
+        }
+        mg_destroy_server(&server);
+    } else {
+        struct mg_server **mg_servers = NULL;
+        int *sockets = NULL;
+        close(globsd);
+        
+        mg_servers = calloc(wping_options.num_threads, sizeof(struct mg_server *));
+        sockets = calloc(wping_options.num_threads, sizeof(int));
+        for (int i = 0; i < wping_options.num_threads; i ++) {
+            if ((sockets[i] = setup_socket_inet_raw(getprotobyname("ICMP"), (char **) &errmsg)) < 0) {
+                printf("%s\n", errmsg);
+                exit(1);
+            }
+            mg_servers[i] = mg_create_server(&sockets[i], handler);
+            if (i == 0) {
+                mg_set_option(mg_servers[i], "listening_port", wping_options.port);
+            } else {
+                mg_set_listening_socket(mg_servers[i], mg_get_listening_socket(mg_servers[0]));
+            }
+            mg_start_thread(serve,  mg_servers[i]);
+        }
+        while (exit_flag == 0) {
+            sleep(1);
+        }
+        for (int i = 0; i < wping_options.num_threads; i ++) {
+            mg_destroy_server(&mg_servers[i]);
+        }
     }
-    mg_destroy_server(&server);
+
     if (wping_options.want_daemon) {
         unlink(wping_options.pidfile);
     }

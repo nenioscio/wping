@@ -26,6 +26,7 @@ Daemon is designed to provide json output if request (Accept header):
 
 ***TODOS:***<br>
 *   Add multiple packet handling
+*   Enable pcap handling for linux in code and build
 
 -----
 

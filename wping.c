@@ -107,6 +107,15 @@ static const char *html_form =
   "<input type=\"submit\" />"
   "</form></body></html>";
 
+struct str_wping_options{
+    char *port;
+    char *pidfile;
+    int want_daemon;
+    int num_threads;
+};
+
+struct str_wping_options wping_options;
+
 int globsd = -1;
 int exit_flag = 0;
 pthread_mutex_t g_lock;
@@ -195,7 +204,7 @@ int icmp_pkt_matches(struct ping_packet * pkt1, void* buf2, size_t bytes1, size_
     if ( pkt2->hdr.icmp_type == ICMP_ECHO ) {
         return 0;
     }
-    if ( pkt2->hdr.icmp_type == ICMP_DEST_UNREACH ) {
+    if ( pkt2->hdr.icmp_type == ICMP_DEST_UNREACH || pkt2->hdr.icmp_type == ICMP_TIME_EXCEEDED ) {
         ptr      = (unsigned char *) pkt2->hdr.icmp_data;
         ip       = (struct ip *) ptr;
         ptr     += ip->ip_hl*4;
@@ -214,10 +223,18 @@ int icmp_pkt_matches(struct ping_packet * pkt1, void* buf2, size_t bytes1, size_
 #endif
 
     /* package shares sequence and if pkt2 is of type ECHOREPLY packages share id  */
-    if ( pkt2->hdr.icmp_seq == pkt2->hdr.icmp_seq &&
+    if ( pkt1->hdr.icmp_seq == pkt2->hdr.icmp_seq &&
             (pkt1->hdr.icmp_id == pkt2->hdr.icmp_id) ) {
+        bytes2 -= ((unsigned char *) pkt2->hdr.icmp_data) - ((unsigned char*) pkt2);
+#ifdef _DEBUG
+        printf("echo seq and id matching\n");
+#endif
         /* further check if message is equal */
-        if (!memcmp(pkt1->hdr.icmp_data, pkt2->hdr.icmp_data, DATASIZE)) return 1;
+        if (bytes2 < DATASIZE) {
+            if (pkt2->hdr.icmp_type != ICMP_ECHOREPLY) return 1;
+        } else { 
+            if (!memcmp(pkt1->hdr.icmp_data, pkt2->hdr.icmp_data, DATASIZE)) return 1;
+        }
     }
     return 0;
 }
@@ -308,7 +325,8 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int
     /* prepare packet */
     bzero(&pkt, sizeof(pkt));
     pkt.hdr.icmp_type = ICMP_ECHO;
-    pkt.hdr.icmp_id   = getpid();
+    /* sd number ought to be unique over all threads */
+    pkt.hdr.icmp_id = sd;
     pkt.hdr.icmp_seq  = htons(seq++);
     if (fill_msg(pkt.hdr.icmp_data, DATASIZE) != DATASIZE) { 
         *errmsg = (char*) &"Error filiing Message";
@@ -358,7 +376,7 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int
 #endif
             continue;
         }
-        if (readsize < (sizeof(pkt) + sizeof(struct ip))) {
+        if (readsize < (sizeof(icmphdr_t) + sizeof(struct ip))) {
             *errmsg=(char *)&"read error";
             retval = -5;
             break;
@@ -585,15 +603,6 @@ static int handler(struct mg_connection *conn, enum mg_event ev) {
     return MG_REQUEST_PROCESSED;
 }
 
-struct str_wping_options{
-    char *port;
-    char *pidfile;
-    int want_daemon;
-    int num_threads;
-};
-
-struct str_wping_options wping_options;
-
 void parse_args(int argc, char*argv[], struct str_wping_options *target) {
     int c;
 
@@ -626,11 +635,11 @@ void parse_args(int argc, char*argv[], struct str_wping_options *target) {
             case 'h':
             default:
                 printf( "Usage: %s [-d] [-p <port>] [-f <pidfile>] [-t <Number of threads>]\n"
-                        "\t-d\tStart deaemon (background mode)\n"
-                        "\t-p <port>\tport to bind onto\n"
-                        "\t-f <pidfile>\tpidfile to create\n"
+                        "\t-d\t\t\tStart deaemon (background mode)\n"
+                        "\t-p <port>\t\tport to bind onto\n"
+                        "\t-f <pidfile>\t\tpidfile to create\n"
                         "\t-t <Number of threads>\tDefault mode does not\n"
-                        "\t-h\t\tThis message\n\n", argv[0]);
+                        "\t-h\t\t\tThis message\n\n", argv[0]);
                 exit(-1);
         }
     }

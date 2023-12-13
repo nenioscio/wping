@@ -1,6 +1,6 @@
 [submodule "mongoose"]
 	path = 3rdparty/mongoose
-	url = git@github.com:cesanta/mongoose
+	url = https://github.com/cesanta/mongoose
 [submodule "jansson"]
 	path = 3rdparty/jansson
-	url = git@github.com:/akheron/jansson
+	url = https://github.com/akheron/jansson

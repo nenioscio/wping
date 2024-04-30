@@ -91,7 +91,7 @@ typedef struct ping_stack
     struct ping_stack   *ps_next;
     struct ping_stack   *ps_prev;
     struct timeval      ps_starttime;
-    
+
     struct timeval      ps_lastsendtime;
     int                 num_sent;
     int                 num_recv;
@@ -199,7 +199,7 @@ int icmp_pkt_matches(struct ping_packet * pkt1, void* buf2, size_t bytes1, size_
     ptr     += ip->ip_hl * 4;
     bytes2  -= ip->ip_hl * 4;
     pkt2     = (struct ping_packet *) ptr;
-    
+
     /* ignroe foreign echo requests */
     if ( pkt2->hdr.icmp_type == ICMP_ECHO ) {
         return 0;
@@ -232,20 +232,25 @@ int icmp_pkt_matches(struct ping_packet * pkt1, void* buf2, size_t bytes1, size_
         /* further check if message is equal */
         if (bytes2 < DATASIZE) {
             if (pkt2->hdr.icmp_type != ICMP_ECHOREPLY) return 1;
-        } else { 
+        } else {
             if (!memcmp(pkt1->hdr.icmp_data, pkt2->hdr.icmp_data, DATASIZE)) return 1;
         }
     }
     return 0;
 }
 
-int fill_msg(void *msg, int size){
+int fill_msg(void *msg, struct timeval *start_tv, int size){
     char *tmp = msg;
     int i;
+    int datastart = 0;
 
     if (tmp == NULL) return -1;
-    for (i = 0; i <  size; i++) {
-        tmp[i] = (char) i +'0';
+    if (start_tv != NULL && sizeof(struct timeval) < size) {
+        datastart = sizeof(struct timeval);
+        memcpy(msg, start_tv, datastart);
+    }
+    for (i = datastart; i <  size; i++) {
+        tmp[i] = (char) ((i - datastart) % 26) +'A';
     }
     return i;
 }
@@ -287,7 +292,7 @@ void display_ping_pkt(void *buf, size_t bytes) {
     printf("dst=%s\n", inet_ntop(AF_INET, &ip->ip_dst, ipbuf, INET_ADDRSTRLEN));
     printf("ICMP: type[%d/%d] checksum[%d] id[%d] seq[%d] gateway[%s]\n",
         icmp->icmp_type, icmp->icmp_code, ntohs(icmp->icmp_cksum),
-        icmp->icmp_hun.ih_idseq.icd_id, icmp->icmp_hun.ih_idseq.icd_seq, 
+        icmp->icmp_hun.ih_idseq.icd_id, icmp->icmp_hun.ih_idseq.icd_seq,
         inet_ntop(AF_INET, &icmp->icmp_hun.ih_gwaddr, ipbuf, INET_ADDRSTRLEN));
 }
 
@@ -328,7 +333,12 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int
     /* sd number ought to be unique over all threads */
     pkt.hdr.icmp_id = sd;
     pkt.hdr.icmp_seq  = htons(seq++);
-    if (fill_msg(pkt.hdr.icmp_data, DATASIZE) != DATASIZE) { 
+    /* we use the timestamp in the packet so prepare start timer here */
+    if (gettimeofday(&start_timeval, NULL) == -1) {
+        *errmsg = (char*) &"gettime error";
+        return -4;
+    }
+    if (fill_msg(pkt.hdr.icmp_data, &start_timeval, DATASIZE) != DATASIZE) {
         *errmsg = (char*) &"Error filiing Message";
         return -1;
     }
@@ -336,17 +346,13 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int
 
     /* send packet */
     if (poll(&write_poll, 1, 100) < 1) return -2;
-    if (sendto(sd, &pkt, sizeof(pkt), 0, (struct sockaddr*)ping_addr, sizeof(struct sockaddr_in)) 
+    if (sendto(sd, &pkt, sizeof(pkt), 0, (struct sockaddr*)ping_addr, sizeof(struct sockaddr_in))
         <= 0) {
         *errmsg = (char*) &"send error";
         return -3;
     }
 
-    /* prepare timevals start, end, tmp */
-    if (gettimeofday(&start_timeval, NULL) == -1) {
-        *errmsg = (char*) &"gettime error";
-        return -4;
-    }
+    /* prepare timevals end, tmp */
     tmp_timeval.tv_sec = *timeout / 1000;
     tmp_timeval.tv_usec = (*timeout % 1000) * 1000;
     timeradd(&start_timeval, &tmp_timeval, &end_timeval);
@@ -410,26 +416,26 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int
                 *timeout = end_timeval.tv_usec / 1000 + end_timeval.tv_sec * 1000;
                 retval = 0;
                 break;
-            } 
+            }
 #ifdef _DEBUG
             else {
                 printf("package didn't match\n");
             }
 #endif
-        } 
+        }
     }
     if (set_socket_rcvbuf(sd, 0)!= 0) {
         *errmsg = (char*) &"setsockopt error";
         return -7;
     }
     return retval;
-} 
+}
 
 /**
  * resolve IPv4 in a threadsave manner in AIX 5+, Solaris, Linux
  * (and possibly others)
  * using gethostbyname variants
- * 
+ *
  * addr: target result buffer (struct sockaddr_in)
  * hostname: ip definition to resolve
  *
@@ -486,7 +492,7 @@ int ipv4_resolv(struct sockaddr_in *addr, const char *hostname) {
     return retval;
 
 }
-    
+
 
 static int handler(struct mg_connection *conn, enum mg_event ev) {
     char dst[500], timeoutstr[500], buf[500];
@@ -575,7 +581,7 @@ static int handler(struct mg_connection *conn, enum mg_event ev) {
                 if (errmsg == NULL) {
                     errmsg = "";
                 }
-                jsonoutdata = json_pack("{sbsssisisi}", "status", alive, "status_message", 
+                jsonoutdata = json_pack("{sbsssisisi}", "status", alive, "status_message",
                                         errmsg, "icmp_type", icmp_type, "icmp_code", icmp_code,
                                         "response_time", timeout);
                 jsonout    = json_dumps(jsonoutdata, 1024);
@@ -586,8 +592,8 @@ static int handler(struct mg_connection *conn, enum mg_event ev) {
                 mg_printf_data(conn,
                                "Destination alive: %d\n"
                                "Icmp_response_type: %d\n"
-                               "Icmp_response_code: %d\n" 
-                               "Icmp_response_time: %d\n", 
+                               "Icmp_response_code: %d\n"
+                               "Icmp_response_time: %d\n",
                                 alive, icmp_type, icmp_code, timeout);
                 if (errmsg != NULL) {
                     mg_printf_data(conn,
@@ -672,7 +678,7 @@ int main(int argc, char *argv[]) {
     char buf[WPING_BUFSIZE];
 
 
-    parse_args(argc, argv, &wping_options); 
+    parse_args(argc, argv, &wping_options);
 
     /* test socket first */
     if ((globsd = setup_socket_inet_raw(getprotobyname("ICMP"), (char **) &errmsg)) < 0) {
@@ -687,7 +693,7 @@ int main(int argc, char *argv[]) {
         int null_fd;
         pid_t pid;
 
-            
+
         pid = fork();
 
         if (pid < 0) {
@@ -739,7 +745,7 @@ int main(int argc, char *argv[]) {
             close(pid_file_fd);
         } else {
             int status = 0;
-            
+
             /* wait for pidfile / or child exit */
             while (stat(wping_options.pidfile, &pid_file) != 0) {
                 if (waitpid(-1, &status, WNOHANG) == pid) {
@@ -771,7 +777,7 @@ int main(int argc, char *argv[]) {
         struct mg_server **mg_servers = NULL;
         int *sockets = NULL;
         close(globsd);
-        
+
         mg_servers = calloc(wping_options.num_threads, sizeof(struct mg_server *));
         sockets = calloc(wping_options.num_threads, sizeof(int));
         for (int i = 0; i < wping_options.num_threads; i ++) {

@@ -154,6 +154,11 @@ int setup_socket_inet_raw(struct protoent* proto, char **errmsg) {
     return sd;
 }
 
+int shutdown_socket(int sd) {
+    shutdown(sd, SHUT_RDWR);
+    return close(sd);
+}
+
 int icmp_pkt_matches(struct ping_packet * pkt1, void* buf2, size_t bytes1, size_t bytes2) {
     unsigned char *ptr;
     struct ip     *ip;
@@ -317,22 +322,25 @@ int ping(struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int *icmp_t
     /* we use the timestamp in the packet so prepare start timer here */
     if (gettimeofday(&start_timeval, NULL) == -1) {
         *errmsg = (char*) &"gettime error";
-        shutdown(sd, SHUT_RDWR);
+        shutdown_socket(sd);
         return -4;
     }
     if (fill_msg(pkt.hdr.icmp_data, &start_timeval, DATASIZE) != DATASIZE) {
         *errmsg = (char*) &"Error filiing Message";
-        shutdown(sd, SHUT_RDWR);
+        shutdown_socket(sd);
         return -1;
     }
     pkt.hdr.icmp_cksum = icmp_calc_checksum(&pkt, sizeof(pkt));
 
     /* send packet */
-    if (poll(&write_poll, 1, 100) < 1) return -2;
+    if (poll(&write_poll, 1, 100) < 1) {
+        shutdown_socket(sd);
+        return -2;
+    }
     if (sendto(sd, &pkt, sizeof(pkt), 0, (struct sockaddr*)ping_addr, sizeof(struct sockaddr_in))
         <= 0) {
         *errmsg = (char*) &"send error";
-        shutdown(sd, SHUT_RDWR);
+        shutdown_socket(sd);
         return -3;
     }
 
@@ -344,7 +352,7 @@ int ping(struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int *icmp_t
     while (1) {
         if (gettimeofday(&tmp_timeval, NULL) == -1) {
             *errmsg = (char*) &"gettime error";
-            shutdown(sd, SHUT_RDWR);
+            shutdown_socket(sd);
             return -4;
         }
         if (timercmp(&tmp_timeval, &end_timeval, >)) {
@@ -395,7 +403,7 @@ int ping(struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int *icmp_t
                 *icmp_code = icmp->icmp_code;
                 if (gettimeofday(&tmp_timeval, NULL) == -1) {
                     *errmsg = (char*) &"gettime error";
-                    shutdown(sd, SHUT_RDWR);
+                    shutdown_socket(sd);
                     return -4;
                 }
                 timersub(&tmp_timeval, &start_timeval, &end_timeval);
@@ -410,7 +418,7 @@ int ping(struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int *icmp_t
 #endif
         }
     }
-    shutdown(sd, SHUT_RDWR);
+    shutdown_socket(sd);
     return retval;
 }
 

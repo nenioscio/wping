@@ -130,18 +130,6 @@ static void signal_handler(int sig_num) {
     }
 }
 
-int set_socket_rcvbuf(int sd, const int val_rcvbuf) {
-/* Tests showed that 'disabling the socket buffer on AIX
- *  does break polling on the socket */
-#ifndef _AIX
-    int orig_rcvbuf, orig_rcvbuf_size;
-    if (setsockopt(sd, SOL_SOCKET, SO_RCVBUF, (char *)(&val_rcvbuf), sizeof(val_rcvbuf))!= 0) {
-        return errno;
-    }
-#endif
-    return 0;
-}
-
 int setup_socket_inet_raw(struct protoent* proto, char **errmsg) {
     const int val = 255;
     const int val_rcvbuf = 0;
@@ -157,10 +145,6 @@ int setup_socket_inet_raw(struct protoent* proto, char **errmsg) {
     }
     if (setsockopt(sd, IPPROTO_IP, IP_TTL, &val, sizeof(val)) != 0) {
         *errmsg = (char *) &ERR_SETSOCKOPT;
-        return -1;
-    }
-    if (set_socket_rcvbuf(sd, 0) != 0) {
-        *errmsg = (char*) &ERR_SETSOCKOPT;
         return -1;
     }
     if (fcntl(sd, F_SETFL, O_NONBLOCK) != 0) {
@@ -296,7 +280,7 @@ void display_ping_pkt(void *buf, size_t bytes) {
         inet_ntop(AF_INET, &icmp->icmp_hun.ih_gwaddr, ipbuf, INET_ADDRSTRLEN));
 }
 
-int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int *icmp_type, int *icmp_code) {
+int ping(struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int *icmp_type, int *icmp_code) {
     struct ping_packet pkt;
     struct sockaddr_in r_addr;
     struct pollfd read_poll, write_poll;
@@ -308,6 +292,11 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int
     struct timeval start_timeval, tmp_timeval, end_timeval;
     icmphdr_t *icmp;
     int retval = 0;
+    int sd;
+
+    if ((sd = setup_socket_inet_raw(getprotobyname("ICMP"), (char **) &errmsg)) < 0) {
+        return -8;
+    }
 
     read_poll.fd       = sd;
     read_poll.events   = POLLRDNORM;
@@ -319,14 +308,6 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int
 
     r_addr_len         = sizeof(r_addr);
 
-    /* clear socket */
-    if (set_socket_rcvbuf(sd, MAX_MTU)!= 0) {
-        *errmsg = (char*) &"setsockopt error";
-        return -7;
-    }
-    while ( recvfrom(sd, &pkt, sizeof(pkt), 0, (struct sockaddr*)&r_addr, &r_addr_len) > 0) {
-    }
-
     /* prepare packet */
     bzero(&pkt, sizeof(pkt));
     pkt.hdr.icmp_type = ICMP_ECHO;
@@ -336,10 +317,12 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int
     /* we use the timestamp in the packet so prepare start timer here */
     if (gettimeofday(&start_timeval, NULL) == -1) {
         *errmsg = (char*) &"gettime error";
+        shutdown(sd, SHUT_RDWR);
         return -4;
     }
     if (fill_msg(pkt.hdr.icmp_data, &start_timeval, DATASIZE) != DATASIZE) {
         *errmsg = (char*) &"Error filiing Message";
+        shutdown(sd, SHUT_RDWR);
         return -1;
     }
     pkt.hdr.icmp_cksum = icmp_calc_checksum(&pkt, sizeof(pkt));
@@ -349,6 +332,7 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int
     if (sendto(sd, &pkt, sizeof(pkt), 0, (struct sockaddr*)ping_addr, sizeof(struct sockaddr_in))
         <= 0) {
         *errmsg = (char*) &"send error";
+        shutdown(sd, SHUT_RDWR);
         return -3;
     }
 
@@ -360,6 +344,7 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int
     while (1) {
         if (gettimeofday(&tmp_timeval, NULL) == -1) {
             *errmsg = (char*) &"gettime error";
+            shutdown(sd, SHUT_RDWR);
             return -4;
         }
         if (timercmp(&tmp_timeval, &end_timeval, >)) {
@@ -410,6 +395,7 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int
                 *icmp_code = icmp->icmp_code;
                 if (gettimeofday(&tmp_timeval, NULL) == -1) {
                     *errmsg = (char*) &"gettime error";
+                    shutdown(sd, SHUT_RDWR);
                     return -4;
                 }
                 timersub(&tmp_timeval, &start_timeval, &end_timeval);
@@ -424,10 +410,7 @@ int ping(int sd, struct sockaddr_in *ping_addr, char **errmsg, int *timeout, int
 #endif
         }
     }
-    if (set_socket_rcvbuf(sd, 0)!= 0) {
-        *errmsg = (char*) &"setsockopt error";
-        return -7;
-    }
+    shutdown(sd, SHUT_RDWR);
     return retval;
 }
 
@@ -506,7 +489,6 @@ static int handler(struct mg_connection *conn, enum mg_event ev) {
     int  retval;
     int  alive = 1;
     int  wantjson = 0;
-    int  *sd;
 
     struct hostent *dst_host;
     struct sockaddr_in addr;
@@ -524,8 +506,6 @@ static int handler(struct mg_connection *conn, enum mg_event ev) {
         // Parse form data. var1 and var2 are guaranteed to be NUL-terminated
         mg_get_var(conn, "dst", dst, sizeof(dst));
         mg_get_var(conn, "timeoutMs", timeoutstr, sizeof(timeoutstr));
-        sd = (int *) conn->server_param;
-
 
         // Check for json request and store in flag
         accept=mg_get_header(conn, "Accept");
@@ -573,7 +553,7 @@ static int handler(struct mg_connection *conn, enum mg_event ev) {
                             "Timeout invalid: %s\n", timeoutstr);
         } else {
             icmp_type = icmp_code = 0;
-            retval = ping(*sd, &addr, (char **) &errmsg, &timeout, &icmp_type, &icmp_code);
+            retval = ping(&addr, (char **) &errmsg, &timeout, &icmp_type, &icmp_code);
             if (retval != 0 || icmp_type != 0) {
                 alive = 0;
             }
@@ -775,17 +755,11 @@ int main(int argc, char *argv[]) {
         mg_destroy_server(&server);
     } else {
         struct mg_server **mg_servers = NULL;
-        int *sockets = NULL;
         close(globsd);
 
         mg_servers = calloc(wping_options.num_threads, sizeof(struct mg_server *));
-        sockets = calloc(wping_options.num_threads, sizeof(int));
         for (int i = 0; i < wping_options.num_threads; i ++) {
-            if ((sockets[i] = setup_socket_inet_raw(getprotobyname("ICMP"), (char **) &errmsg)) < 0) {
-                printf("%s\n", errmsg);
-                exit(1);
-            }
-            mg_servers[i] = mg_create_server(&sockets[i], handler);
+            mg_servers[i] = mg_create_server(NULL, handler);
             if (i == 0) {
                 mg_set_option(mg_servers[i], "listening_port", wping_options.port);
             } else {

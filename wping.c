@@ -486,7 +486,7 @@ int ipv4_resolv(struct sockaddr_in *addr, const char *hostname) {
 
 
 static int handler(struct mg_connection *conn, enum mg_event ev) {
-    char dst[500], timeoutstr[500], buf[500];
+    char dst[500], timeoutstr[500], buf[600];
     char *errmsg = NULL;
     char *endptr = NULL;
     char *jsonout = NULL;
